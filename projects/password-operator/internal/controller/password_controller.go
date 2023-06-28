@@ -49,7 +49,9 @@ type PasswordReconciler struct {
 func (r *PasswordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	logger := log.FromContext(ctx)
+
+	logger.Info("Reconcile is called.")
 
 	return ctrl.Result{}, nil
 }
