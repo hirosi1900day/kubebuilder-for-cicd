@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 
+	passwordGenerator "github.com/sethvargo/go-password/password"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -66,10 +67,42 @@ func (r *PasswordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if errors.IsNotFound(err) {
 			// Create Secret
 			logger.Info("Create Secret object if not exists - create secret")
-			secret := newSecretFromPassword(&password)
+			passwordStr, err := passwordGenerator.Generate(
+				password.Spec.Length,
+				password.Spec.Digit,
+				password.Spec.Symbol,
+				password.Spec.CaseSensitive,
+				password.Spec.DisallowRepeat,
+			)
+			if err != nil {
+				logger.Error(err, "Create Secret object if not exists - failed to generate password")
+				password.Status.State = secretv1alpha1.PasswordFailed
+				if err := r.Status().Update(ctx, &password); err != nil {
+					logger.Error(err, "Failed to update Password status")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, err
+			}
+			secret := newSecretFromPassword(&password, passwordStr)
+			err = ctrl.SetControllerReference(&password, secret, r.Scheme)
+			if err != nil {
+				logger.Error(err, "Create Secret object if not exists - failed to set SetControllerReference")
+				password.Status.State = secretv1alpha1.PasswordFailed
+				if err := r.Status().Update(ctx, &password); err != nil {
+					logger.Error(err, "Failed to update Password status")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, err
+			}
+
 			err = r.Create(ctx, secret)
 			if err != nil {
 				logger.Error(err, "Create Secret object if not exists - failed to create Secret")
+				password.Status.State = secretv1alpha1.PasswordFailed
+				if err := r.Status().Update(ctx, &password); err != nil {
+					logger.Error(err, "Failed to update Password status")
+					return ctrl.Result{}, err
+				}
 				return ctrl.Result{}, err
 			}
 			logger.Info("Create Secret object if not exists - Secret successfully created")
@@ -81,6 +114,16 @@ func (r *PasswordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	logger.Info("Create Secret object if not exists - completed")
 
+	func (r *PasswordReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+		// ...
+		password.Status.State = secretv1alpha1.PasswordInSync
+		if err := r.Status().Update(ctx, &password); err != nil {
+			logger.Error(err, "Failed to update Password status")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -91,14 +134,14 @@ func (r *PasswordReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func newSecretFromPassword(password *secretv1alpha1.Password) *corev1.Secret {
+func newSecretFromPassword(password *secretv1alpha1.Password, passwordStr string) *corev1.Secret {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      password.Name,
 			Namespace: password.Namespace,
 		},
 		Data: map[string][]byte{
-			"password": []byte("123456789"), // password=123456789
+			"password": []byte(passwordStr),
 		},
 	}
 	return secret
